@@ -10,7 +10,7 @@ async function generate() {
         name: '_db',
         callable: false,
         subpaths: {},
-        pathBehind: [],
+        pathBehind: ['_db'],
         isEndpoint: false
     };
 
@@ -18,7 +18,7 @@ async function generate() {
         name: 'database',
         callable: true,
         subpaths: {},
-        pathBehind: ['_db'],
+        pathBehind: ['_db', 'database'],
         isEndpoint: false
     };
     _db.subpaths['database'] = dbName;
@@ -28,12 +28,16 @@ async function generate() {
         let info: PathInfo = {
             road: parts,
             ahead: parts,
-            behind: ['_db', 'database'],
+            behind: [],
             current: ''
         };
         buildSubpaths(swagger, dbName, walkToNext(info))
     }
     let sourceFile: SourceFile = project.createSourceFile('src/generated/index.ts', undefined, {overwrite: true});
+    sourceFile.addImportDeclaration({
+        namedImports: [{name: "Endpoint"}, {name: 'Connection'}, {name: 'ApiNode'}],
+        moduleSpecifier: '../basics'
+    });
     sourceFile.addStatements(buildSourceStructures(swagger, _db));
     sourceFile.saveSync();
 }
@@ -62,9 +66,12 @@ function buildSubpaths(swagger, root: PathItem, pathInfo: PathInfo) {
 
 function buildSourceStructures(swagger, root: PathItem): ClassDeclarationStructure[] {
     let structures: ClassDeclarationStructure[] = [];
+    let suffix = root.isEndpoint ? 'Endpoint' : '';
+    let className = pascalCase([...root.pathBehind, suffix].join(' '));
     root.morph = {
         kind: StructureKind.Class,
-        name: pascalCase([...root.pathBehind.slice(2)].join(' ')),
+        extends: root.isEndpoint ? 'Endpoint' : 'ApiNode',
+        name: className,
         properties: [],
         methods: []
     };
@@ -76,26 +83,46 @@ function buildSourceStructures(swagger, root: PathItem): ClassDeclarationStructu
             root.morph.methods!.push({
                 name: camelCase(key),
                 returnType: subpath.morph!.name,
-                parameters: [{name: camelCase(key), type: 'string'}]
+                parameters: [{name: camelCase(key), type: 'string'}],
+                statements: writer => {
+                    writer.writeLine('const ops = this._options;').write('return new ').write(subpath.morph!.name!).write('(').inlineBlock(() => {
+                        writer.write('database: ops.database,\n' +
+                            `params: {...ops.params, ${camelCase(key)} },\n` +
+                            'connection: ops.connection')
+                    }).write(')')
+                }
             });
         } else {
             root.morph.properties!.push({name: camelCase(key), type: subpath.morph!.name});
         }
     }
 
-    if(root.isEndpoint){
-        let path = '/' + root.pathBehind.slice(2).join('/');
+    if (root.isEndpoint) {
+        let path = '/' + root.pathBehind.join('/');
         let swaggerPath = swagger.paths[path];
-        if(!swaggerPath) {
+        if (!swaggerPath) {
             path = path + '/';
             swaggerPath = swagger.paths[path];
         }
-        let httpMethods = ['get','post','put','patch','head','options'];
-        for(let method of httpMethods){
-            if(swaggerPath[method]){
-                root.morph!.methods!.push({name: method});
+        let httpMethods = ['get', 'post', 'put', 'patch', 'delete', 'head', 'options'];
+        for (let method of httpMethods) {
+            if (swaggerPath[method]) {
+                root.morph!.methods!.push({
+                    name: method,
+                    isAsync: true,
+                    statements: writer => {
+                        writer
+                            .writeLine(`let result = await this._got.${method}(this._path,{});`)
+                            .writeLine(`return result.body`);
+                    }
+                });
             }
         }
+        root.morph!.properties!.push({
+            name: '_path',
+            leadingTrivia: 'protected ',
+            initializer: `"/${root.pathBehind.join('/')}"`
+        })
     }
     structures.push(root.morph);
     return structures;
