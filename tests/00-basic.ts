@@ -22,4 +22,5 @@ test.serial("create document, update and delete", async (t) => {
     t.log(result);
     result = await db.api.collection.collectionName("testing").delete();
     t.log(result);
+    t.pass();
 });

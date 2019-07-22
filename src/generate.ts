@@ -1,4 +1,5 @@
 import {
+    ClassDeclarationStructure, InterfaceDeclarationStructure,
     Project,
     SourceFile,
     StatementStructures,
