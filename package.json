@@ -2,22 +2,51 @@
   "name": "arangot",
   "version": "1.0.0",
   "description": "",
-  "main": "index.js",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
-    "generate": "ts-node src/generate.ts"
+    "ava": "ava",
+    "test": "nyc ava",
+    "build": "npm run generate && tsc",
+    "tsc": "tsc",
+    "generate": "ts-node src/generate.ts",
+    "run-db": "docker run -e \"ARANGO_ROOT_PASSWORD=arangot123\" -p \"8529:8529\" arangodb"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "dependencies": {
     "@types/got": "^9.6.2",
-    "@types/node": "^12.6.8",
-    "change-case": "^3.1.0",
     "got": "^9.6.0",
+    "tslib": "^1.10.0"
+  },
+  "ava": {
+    "compileEnhancements": false,
+    "files": [
+      "tests/*.ts"
+    ],
+    "extensions": [
+      "ts"
+    ],
+    "require": [
+      "ts-node/register"
+    ]
+  },
+  "devDependencies": {
+    "@istanbuljs/nyc-config-typescript": "^0.1.3",
+    "injection-js": "^2.2.1",
+    "nock": "^10.0.6",
+    "nyc": "^14.1.1",
     "ts-morph": "^3.1.3",
     "ts-node": "^8.3.0",
-    "tslib": "^1.10.0",
+    "ava": "^2.2.0",
+    "change-case": "^3.1.0",
+    "@types/node": "^12.6.8",
     "typescript": "^3.5.3"
+  },
+  "nyc": {
+    "extends": "@istanbuljs/nyc-config-typescript",
+    "all": true,
+    "check-coverage": true
   }
 }

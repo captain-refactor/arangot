@@ -1,5 +1,11 @@
-import {ClassDeclarationStructure, Project, SourceFile, StatementStructures, StructureKind} from "ts-morph";
+import {
+    Project,
+    SourceFile,
+    StatementStructures,
+    StructureKind
+} from "ts-morph";
 import {camelCase, pascalCase} from 'change-case';
+import {HTTP_METHODS} from "./http-methods";
 
 
 async function generate() {
@@ -34,11 +40,11 @@ async function generate() {
         buildSubpaths(swagger, dbName, walkToNext(info))
     }
     let sourceFile: SourceFile = project.createSourceFile('src/generated/index.ts', undefined, {overwrite: true});
-    sourceFile.addImportDeclaration({
-        namedImports: [{name: "Endpoint"}, {name: 'Connection'}, {name: 'ApiNode'}],
+    sourceFile.addImportDeclarations([{
+        namedImports: [{name: "Endpoint"}, {name: 'ApiNode'}],
         moduleSpecifier: '../basics'
-    });
-    sourceFile.addStatements(buildSourceStructures(swagger, _db));
+    }, {defaultImport: '* as got', moduleSpecifier: 'got'}]);
+    sourceFile.addStatements(buildSourceStructures(swagger, dbName));
     sourceFile.saveSync();
 }
 
@@ -64,14 +70,15 @@ function buildSubpaths(swagger, root: PathItem, pathInfo: PathInfo) {
 }
 
 
-function buildSourceStructures(swagger, root: PathItem): ClassDeclarationStructure[] {
-    let structures: ClassDeclarationStructure[] = [];
+function buildSourceStructures(swagger, root: PathItem): StatementStructures[] {
+    let structures: StatementStructures[] = [];
     let suffix = root.isEndpoint ? 'Endpoint' : '';
     let className = pascalCase([...root.pathBehind, suffix].join(' '));
-    root.morph = {
+    root.classDecl = {
         kind: StructureKind.Class,
         extends: root.isEndpoint ? 'Endpoint' : 'ApiNode',
         name: className,
+        isExported: true,
         properties: [],
         methods: []
     };
@@ -80,57 +87,71 @@ function buildSourceStructures(swagger, root: PathItem): ClassDeclarationStructu
         let subpath = root.subpaths[key];
         structures.push(...buildSourceStructures(swagger, subpath));
         if (subpath.callable) {
-            root.morph.methods!.push({
+            root.classDecl.methods!.push({
                 name: camelCase(key),
-                returnType: subpath.morph!.name,
+                returnType: subpath.classDecl!.name,
                 parameters: [{name: camelCase(key), type: 'string'}],
                 statements: writer => {
-                    writer.writeLine('const ops = this._options;').write('return new ').write(subpath.morph!.name!).write('(').inlineBlock(() => {
+                    writer.writeLine('const ops = this._options;').write('return new ').write(subpath.classDecl!.name!).write('(').inlineBlock(() => {
                         writer.write('database: ops.database,\n' +
-                            `params: {...ops.params, ${camelCase(key)} },\n` +
+                            `params: {...ops.params, ['${key}']:${camelCase(key)} },\n` +
                             'connection: ops.connection')
                     }).write(')')
                 }
             });
         } else {
-            root.morph.properties!.push({name: camelCase(key), type: subpath.morph!.name});
+            let type = subpath.classDecl!.name;
+            root.classDecl.properties!.push({
+                name: camelCase(key),
+                type: type,
+                initializer: `new ${type}(this._options)`
+            });
         }
     }
 
     if (root.isEndpoint) {
+
+        root.interfaceDecl = {
+            kind: StructureKind.Interface,
+            name: className,
+            isExported: true,
+            methods: []
+        };
+
         let path = '/' + root.pathBehind.join('/');
         let swaggerPath = swagger.paths[path];
         if (!swaggerPath) {
             path = path + '/';
             swaggerPath = swagger.paths[path];
         }
-        let httpMethods = ['get', 'post', 'put', 'patch', 'delete', 'head', 'options'];
-        for (let method of httpMethods) {
+
+        for (let method of HTTP_METHODS) {
             if (swaggerPath[method]) {
-                root.morph!.methods!.push({
+                root.interfaceDecl!.methods!.push({
                     name: method,
-                    isAsync: true,
-                    statements: writer => {
-                        writer
-                            .writeLine(`let result = await this._got.${method}(this._path,{});`)
-                            .writeLine(`return result.body`);
-                    }
+                    parameters: [{
+                        name: 'options',
+                        hasQuestionToken: true,
+                        type: 'Partial<got.GotJSONOptions|got.GotBodyOptions<any>>',
+                    }]
                 });
             }
         }
-        root.morph!.properties!.push({
+        root.classDecl!.properties!.push({
             name: '_path',
             leadingTrivia: 'protected ',
             initializer: `"/${root.pathBehind.join('/')}"`
         })
     }
-    structures.push(root.morph);
+    structures.push(root.classDecl);
+    if (root.interfaceDecl) structures.push(root.interfaceDecl);
     return structures;
 }
 
 interface PathItem {
     name: string;
-    morph?: ClassDeclarationStructure;
+    classDecl?: ClassDeclarationStructure;
+    interfaceDecl?: InterfaceDeclarationStructure;
     callable?: boolean;
     subpaths: { [key: string]: PathItem };
     pathBehind: string[];
